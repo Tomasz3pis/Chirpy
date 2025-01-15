@@ -23,6 +23,8 @@ func main() {
 		FileserverHits: atomic.Int32{},
 		Db:             getDb(),
 		Platform:       os.Getenv("PLATFORM"),
+		JWT:            os.Getenv("JWT_SECRET"),
+		Polka_key:      os.Getenv("POLKA_KEY"),
 	}
 
 	mux := http.NewServeMux()
@@ -33,7 +35,13 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.CreateChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.GetAllChirps)
 	mux.HandleFunc("GET /api/chirps/{id}", apiCfg.GetChirp)
+	mux.HandleFunc("DELETE /api/chirps/{id}", apiCfg.DeleteChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.CreateUser)
+	mux.HandleFunc("PUT /api/users", apiCfg.UpdateUser)
+	mux.HandleFunc("POST /api/login", apiCfg.Login)
+	mux.HandleFunc("POST /api/refresh", apiCfg.Refresh)
+	mux.HandleFunc("POST /api/revoke", apiCfg.Revoke)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.UpgradeUser)
 	serv := &http.Server{
 		Addr:    ":" + port,
 		Handler: mux,

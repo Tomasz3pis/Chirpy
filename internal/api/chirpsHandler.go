@@ -1,9 +1,10 @@
 package api
 
 import (
+	"chirpy/internal/auth"
 	"chirpy/internal/database"
 	"encoding/json"
-	"fmt"
+	"log"
 	"net/http"
 	"slices"
 	"strings"
@@ -12,7 +13,6 @@ import (
 )
 
 func (cfg *ApiConfig) GetChirp(w http.ResponseWriter, r *http.Request) {
-	fmt.Println(r.PathValue("id"))
 	cId, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong")
@@ -33,7 +33,15 @@ func (cfg *ApiConfig) GetChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *ApiConfig) GetAllChirps(w http.ResponseWriter, r *http.Request) {
-	cs, err := cfg.Db.GetAllChirps(r.Context())
+	s := r.URL.Query().Get("author_id")
+	var cs []database.Chirp
+	var err error
+	if s != "" {
+		uId, _ := uuid.Parse(s)
+		cs, err = cfg.Db.GetAllChirpsByAuthor(r.Context(), uId)
+	} else {
+		cs, err = cfg.Db.GetAllChirps(r.Context())
+	}
 	if err != nil {
 		respondWithError(w, 500, "Something went wrong")
 		return
@@ -53,13 +61,24 @@ func (cfg *ApiConfig) GetAllChirps(w http.ResponseWriter, r *http.Request) {
 
 func (cfg *ApiConfig) CreateChirp(w http.ResponseWriter, r *http.Request) {
 	type parameters struct {
-		Body    string `json:"body"`
-		User_id string `json:"user_id"`
+		Body string `json:"body"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	params := parameters{}
-	err := decoder.Decode(&params)
+	token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
+		log.Printf("Failed to retrive token: %s", err)
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+	uId, err := auth.ValidateJWT(token, cfg.JWT)
+	if err != nil {
+		respondWithError(w, 401, "Failed to validate user")
+		return
+	}
+	err = decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Failed to decode json: %s", err)
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
@@ -67,16 +86,12 @@ func (cfg *ApiConfig) CreateChirp(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
-	uId, err := uuid.Parse(params.User_id)
-	if err != nil {
-		respondWithError(w, 500, "Something went wrong")
-		return
-	}
 	c, err := cfg.Db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body:   params.Body,
 		UserID: uId,
 	})
 	if err != nil {
+		log.Printf("Failed to create chirp: %s", err)
 		respondWithError(w, 500, "Something went wrong")
 		return
 	}
@@ -87,6 +102,45 @@ func (cfg *ApiConfig) CreateChirp(w http.ResponseWriter, r *http.Request) {
 		Body:       c.Body,
 		User_id:    c.UserID.String(),
 	})
+}
+
+func (cfg *ApiConfig) DeleteChirp(w http.ResponseWriter, r *http.Request) {
+	cId, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		log.Printf("Failed to retrive token: %s", err)
+		respondWithError(w, 401, "Invalid token")
+		return
+	}
+	uId, err := auth.ValidateJWT(token, cfg.JWT)
+	if err != nil {
+		log.Printf("Failed to validate token: %s", err)
+		respondWithError(w, 403, "Invalid token")
+		return
+	}
+	chirpDb, err := cfg.Db.GetChirp(r.Context(), cId)
+	if err != nil {
+		log.Printf("Failed to retrive chirp: %s", err)
+		respondWithError(w, 404, "Chirp not found")
+		return
+	}
+	if chirpDb.UserID != uId {
+		respondWithError(w, 403, "Not authorized")
+		return
+	}
+	err = cfg.Db.DeleteChirp(r.Context(), cId)
+	if err != nil {
+		log.Printf("Failed to delete chirp: %s", err)
+		respondWithError(w, 500, "Something went wrong")
+		return
+	}
+	w.WriteHeader(204)
+
 }
 
 func censorship(s string) string {
